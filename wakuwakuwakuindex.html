@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>揚げパンタップ！</title>
+<style>
+:root{--bg:#f6f3ea;--panel:#fff7ec;--accent:#d9534f;}
+html,body{margin:0;padding:0;height:100%;display:flex;justify-content:center;font-family:system-ui,-apple-system,Segoe UI,Roboto,"ヒラギノ角ゴ ProN","Noto Sans JP",sans-serif;background:var(--bg);}
+.wrap{width:100%;max-width:420px;padding:12px;box-sizing:border-box;}
+h1{margin:8px 0;font-size:20px;color:#5a4a3a;text-align:center;}
+.controls{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;}
+input,button{padding:8px 10px;border-radius:8px;border:1px solid #ccc;font-size:14px;}
+#startBtn{background:#5cb85c;color:#fff;border-color:#4cae4c;font-weight:600;}
+#scoreBox{position:fixed;top:12px;right:12px;background:rgba(255,255,255,0.85);padding:8px 12px;border-radius:10px;font-weight:700;color:var(--accent);z-index:40;}
+#timerBox{position:fixed;top:12px;left:12px;background:rgba(255,255,255,0.85);padding:8px 12px;border-radius:10px;font-weight:700;color:#3b3b3b;z-index:40;}
+canvas{display:block;border-radius:8px;border:2px solid #ccc;background:var(--panel);width:100%;}
+#status{margin-top:8px;text-align:center;color:#666;font-size:13px;}
+#rankingModal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:100;}
+#rankingBox{background:#fff;padding:18px;border-radius:12px;width:320px;max-height:80vh;overflow:auto;box-shadow:0 6px 20px rgba(0,0,0,0.25);}
+#rankingBox h2{margin:0 0 8px 0;text-align:center;}
+#rankingBox .you{background:#fffbf0;padding:8px;border-radius:8px;margin-bottom:8px;}
+#rankingBox button{margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🍞 揚げパンタップ！</h1>
+<div class="controls">
+<input id="name" type="text" maxlength="12" placeholder="ニックネーム (必須)">
+<button id="saveName">保存</button>
+<button id="startBtn">スタート</button>
+</div>
+
+<div id="scoreBox">スコア: <span id="score">0</span></div>
+<div id="timerBox">残り: <span id="timer">60</span>s</div>
+<canvas id="gameCanvas" width="720" height="1280"></canvas>
+<div id="status">準備OK</div>
+</div>
+
+<div id="rankingModal">
+  <div id="rankingBox">
+    <h2>🏆 ランキング TOP50</h2>
+    <div id="youScore" class="you" style="display:none"></div>
+    <div id="topList">読み込み中...</div>
+    <div style="text-align:center;margin-top:10px">
+      <button id="closeBtn">閉じる</button>
+      <button id="replayBtn" style="display:none;">もう一度スタート</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyBqRAff29ltZlWpMAvyy9wxZQM188pfPlc",
+  authDomain: "agepantappukanseiban.firebaseapp.com",
+  projectId: "agepantappukanseiban",
+  storageBucket: "agepantappukanseiban.firebasestorage.app",
+  messagingSenderId: "704039979799",
+  appId: "1:704039979799:web:b47fc05098f96b98110552",
+  measurementId: "G-QQLQ71PCZR"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+document.addEventListener('DOMContentLoaded', ()=>{
+const canvas=document.getElementById('gameCanvas');
+const ctx=canvas.getContext('2d');
+const scoreEl=document.getElementById('score');
+const timerEl=document.getElementById('timer');
+const statusEl=document.getElementById('status');
+const startBtn=document.getElementById('startBtn');
+const saveNameBtn=document.getElementById('saveName');
+const nameInput=document.getElementById('name');
+const rankingModal=document.getElementById('rankingModal');
+const topList=document.getElementById('topList');
+const replayBtn=document.getElementById('replayBtn');
+const closeBtn=document.getElementById('closeBtn');
+
+let W=canvas.width,H=canvas.height;
+let score=0,running=false,timeLeft=60000,lastTimestamp=0;
+let breads=[],maxBreads=3;
+
+const breadImages=[];
+['https://i.imgur.com/IbgJY53.png','https://i.imgur.com/dgfhLnz.png','https://i.imgur.com/Y9QLDGz.png'].forEach(u=>{
+  const img=new Image(); img.src=u; breadImages.push(img);
+});
+const catchSound=new Audio("https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg");
+catchSound.volume=0.45;
+
+function addBread(){
+  const x=Math.random()*(W-100)+50;
+  const y=Math.random()*(H-200)+50;
+  const img=breadImages[Math.floor(Math.random()*breadImages.length)];
+  const lifetime=2000+Math.random()*2000;
+  breads.push({x,y,w:100,h:44,img,lifetime,created:performance.now()});
+}
+
+function maintainBreads(){
+  while(breads.length<maxBreads){
+    addBread();
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#fff7ec'; ctx.fillRect(0,0,W,H);
+  breads.forEach(b=>{
+    if(b.img.complete) ctx.drawImage(b.img,b.x-b.w/2,b.y-b.h/2,b.w,b.h);
+    else{ctx.fillStyle='#c97a2b'; ctx.beginPath(); ctx.arc(b.x,b.y,28,0,Math.PI*2); ctx.fill();}
+  });
+}
+
+function getCanvasPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+function onCanvasTap(e){
+  if(!running) return;
+  e.preventDefault();
+  const p=getCanvasPos(e);
+  for(let i=breads.length-1;i>=0;i--){
+    const b=breads[i];
+    const dx=Math.abs(p.x-b.x),dy=Math.abs(p.y-b.y);
+    if(dx<=b.w/2 && dy<=b.h/2){
+      score++; scoreEl.textContent=score;
+      try{catchSound.currentTime=0;catchSound.play();}catch(e){}
+      breads.splice(i,1);
+      break;
+    }
+  }
+}
+
+canvas.addEventListener('touchstart',onCanvasTap,{passive:false});
+canvas.addEventListener('mousedown',onCanvasTap);
+
+function update(ts){
+  if(!lastTimestamp) lastTimestamp=ts;
+  const dt=ts-lastTimestamp; lastTimestamp=ts;
+  if(running){
+    timeLeft-=dt;
+    if(timeLeft<=0){timeLeft=0; running=false; finishGame();}
+    timerEl.textContent=Math.ceil(timeLeft/1000);
+
+    // 揚げパン寿命処理
+    const now = performance.now();
+    breads=breads.filter(b=>now-b.created<b.lifetime);
+    maintainBreads();
+  }
+  draw();
+  requestAnimationFrame(update);
+}
+requestAnimationFrame(update);
+
+function startGame(){
+  const n=(localStorage.getItem('fp_name')||nameInput.value||'').trim();
+  if(!n){alert('まずニックネームを保存してください'); return;}
+  localStorage.setItem('fp_name',n); nameInput.value=n; nameInput.disabled=true; saveNameBtn.disabled=true;
+  score=0; scoreEl.textContent='0'; timeLeft=60000; running=true; lastTimestamp=0; breads=[];
+  maintainBreads();
+  statusEl.textContent='プレイ中...';
+  replayBtn.style.display='none';
+}
+
+async function finishGame(){
+  statusEl.textContent=`ゲーム終了！ あなたのスコア: ${score}`;
+  await submitScore(localStorage.getItem('fp_name'),score);
+  showRanking();
+  replayBtn.style.display='inline-block';
+}
+
+/* 名前保存 */
+saveNameBtn.onclick = ()=>{
+  const n=(nameInput.value||'').trim();
+  if(!n) return;
+  localStorage.setItem('fp_name',n);
+  nameInput.disabled=true; saveNameBtn.disabled=true;
+  statusEl.textContent='名前保存: ' + n;
+};
+startBtn.onclick = startGame;
+replayBtn.onclick = startGame;
+closeBtn.onclick = ()=>{ rankingModal.style.display='none'; };
+
+/* Firestore */
+async function submitScore(name,scoreVal){
+  if(!name || scoreVal===0) return;
+  const scoresRef = db.collection('scores');
+  const existing = await scoresRef.where('name','==',name).get();
+  if(!existing.empty){
+    const docId = existing.docs[0].id;
+    const prev = existing.docs[0].data().score;
+    if(scoreVal>prev){
+      await scoresRef.doc(docId).update({score:scoreVal,timestamp:Date.now()});
+    }
+  }else{
+    await scoresRef.add({name:name,score:scoreVal,timestamp:Date.now()});
+  }
+}
+
+/* ランキング表示 */
+async function showRanking(){
+  rankingModal.style.display='flex';
+  topList.innerHTML='読み込み中...';
+  const snapshot = await db.collection('scores').orderBy('score','desc').limit(50).get();
+  let html='';
+  snapshot.docs.forEach((doc,i)=>{
+    const data = doc.data();
+    if(data.name && typeof data.score === 'number'){
+      html+=`${i+1}. ${data.name} : ${data.score}<br>`;
+    }
+  });
+  topList.innerHTML=html;
+}
+
+});
+</script>
+</body>
+</html>
